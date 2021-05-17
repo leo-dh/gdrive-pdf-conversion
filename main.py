@@ -1,12 +1,13 @@
-import os.path
-from typing import Tuple
-from enum import Enum
 import mimetypes
-from googleapiclient.discovery import build
-from google_auth_oauthlib.flow import InstalledAppFlow
+import os.path
+from enum import Enum
+from typing import Tuple
+
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
-from googleapiclient.http import MediaFileUpload
+from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 
 
 class Drive:
@@ -29,7 +30,7 @@ class Drive:
             ],
         )
     )
-    BASE_FOLDER_NAME = "GDrive Conversions"
+    _BASE_FOLDER_NAME = "GDrive Conversions"
 
     def __init__(self):
         self.creds = self.__get_creds()
@@ -99,14 +100,14 @@ class Drive:
         return files
 
     def __get_base_folder(self):
-        query = f"name = '{Drive.BASE_FOLDER_NAME}' and mimeType = '{Drive.GoogleWorkspaceMimetypes.FOLDER.value}'"
+        query = f"name = '{Drive._BASE_FOLDER_NAME}' and mimeType = '{Drive.GoogleWorkspaceMimetypes.FOLDER.value}'"
         result = self.__search_file(query)
         if result:
             folder: dict = result[0]
             return folder.get("id")
         else:
             file_metadata = {
-                "name": Drive.BASE_FOLDER_NAME,
+                "name": Drive._BASE_FOLDER_NAME,
                 "mimeType": Drive.GoogleWorkspaceMimetypes.FOLDER.value,
             }
             folder: dict = (
@@ -114,25 +115,56 @@ class Drive:
             )
             return folder.get("id")
 
-    def upload_file(self, name: str):
+    def upload_file(self, filepath: str, mimetype: str = None):
         folder_id = self.__get_base_folder()
-        file_metadata = {"name": name, "parents": [folder_id]}
-        media = MediaFileUpload(name, mimetype=mimetypes.guess_type(name)[0])
+        _, filename = os.path.split(filepath)
+        file_metadata = {"name": filename, "parents": [folder_id]}
+        if mimetype is not None:
+            file_metadata["mimeType"] = mimetype
+        base_mimetype = mimetypes.guess_type(filepath)[0]
+        media = MediaFileUpload(filepath, mimetype=base_mimetype)
         uploaded_file: dict = (
             self.drive.files()
             .create(body=file_metadata, media_body=media, fields="id")
             .execute()
         )
-        print(uploaded_file.get("id"))
+        return uploaded_file.get("id")
 
     def delete_file(self, file_id: str):
         self.drive.files().delete(fileId=file_id).execute()
 
+    def convert_file(self, filepath: str, delete: bool = True):
+        basename, ext = os.path.splitext(filepath)
+        mimetype = None
+        mimetype_conversion = {
+            (".doc", ".docx"): Drive.GoogleWorkspaceMimetypes.DOCS.value,
+            (".ppt", ".pptx"): Drive.GoogleWorkspaceMimetypes.SLIDES.value,
+        }
+        for k, v in mimetype_conversion.items():
+            if ext in k:
+                mimetype = v
+                break
+        uploaded_file_id = self.upload_file(filepath, mimetype)
+
+        request = self.drive.files().export_media(
+            fileId=uploaded_file_id, mimeType="application/pdf"
+        )
+        with open(f"{basename}.pdf", "wb") as f:
+            downloader = MediaIoBaseDownload(f, request)
+            done = False
+            while done is False:
+                status, done = downloader.next_chunk()
+                print("Download %d%%." % int(status.progress() * 100))
+
+        if delete:
+            self.delete_file(uploaded_file_id)
+
 
 def main():
+    # TODO add watchdog to watch for new files and automatically convert them
+    # TODO add argparse to make it a CLI
     drive = Drive()
-    drive.upload_file("DS Syllabus 2021.doc")
-
+    drive.convert_file("files/Lecture 1.pptx")
     drive.close()
 
 
