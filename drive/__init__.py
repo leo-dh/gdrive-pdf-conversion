@@ -33,8 +33,8 @@ class Drive:
     _BASE_FOLDER_NAME = "GDrive Conversions"
 
     def __init__(self):
-        self.creds = self.__get_creds()
-        self.drive = build("drive", "v3", credentials=self.creds)
+        self._creds = self.__get_creds()
+        self._drive = build("drive", "v3", credentials=self._creds)
 
     def __get_creds(self):
         creds = None
@@ -58,7 +58,7 @@ class Drive:
         return creds
 
     def close(self):
-        self.drive.close()
+        self._drive.close()
 
     def get_recent_files(self, num: int, fields: Tuple[str, ...] = ("id", "name")):
         """
@@ -66,7 +66,7 @@ class Drive:
         """
         fields_string = ", ".join(fields)
         results: dict = (
-            self.drive.files()
+            self._drive.files()
             .list(pageSize=num, fields=f"nextPageToken, files({fields_string})")
             .execute()
         )
@@ -82,7 +82,7 @@ class Drive:
         files = []
         while True:
             response = (
-                self.drive.files()
+                self._drive.files()
                 .list(
                     q=query,
                     spaces="drive",
@@ -111,7 +111,7 @@ class Drive:
                 "mimeType": Drive.GoogleWorkspaceMimetypes.FOLDER.value,
             }
             folder: dict = (
-                self.drive.files().create(body=file_metadata, fields="id").execute()
+                self._drive.files().create(body=file_metadata, fields="id").execute()
             )
             return folder.get("id")
 
@@ -124,14 +124,14 @@ class Drive:
         base_mimetype = mimetypes.guess_type(filepath)[0]
         media = MediaFileUpload(filepath, mimetype=base_mimetype)
         uploaded_file: dict = (
-            self.drive.files()
+            self._drive.files()
             .create(body=file_metadata, media_body=media, fields="id")
             .execute()
         )
         return uploaded_file.get("id")
 
     def delete_file(self, file_id: str):
-        self.drive.files().delete(fileId=file_id).execute()
+        self._drive.files().delete(fileId=file_id).execute()
 
     def convert_file(self, filepath: str, delete: bool = True):
         basename, ext = os.path.splitext(filepath)
@@ -146,7 +146,7 @@ class Drive:
                 break
         uploaded_file_id = self.upload_file(filepath, mimetype)
 
-        request = self.drive.files().export_media(
+        request = self._drive.files().export_media(
             fileId=uploaded_file_id, mimeType="application/pdf"
         )
         with open(f"{basename}.pdf", "wb") as f:
@@ -154,7 +154,7 @@ class Drive:
             done = False
             while done is False:
                 status, done = downloader.next_chunk()
-                print("Download %d%%." % int(status.progress() * 100))
+                # print("Download %d%%." % int(status.progress() * 100))
 
         if delete:
             self.delete_file(uploaded_file_id)
