@@ -8,13 +8,14 @@ google-api-python-client = "*"
 google-auth-httplib2 = "*"
 google-auth-oauthlib = "*"
 watchdog = "*"
+tqdm = "*"
 
 [dev-packages]
 black = "==20.8b0"
+
 [requires]
 python_version = "3.8.6"
 
 [scripts]
 build = "./build.sh"
 clean = "rm files/* gdrive_convert -f"
-

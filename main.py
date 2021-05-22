@@ -1,16 +1,18 @@
+import argparse
+import glob
 import mimetypes
 import os
-import sys
 import time
 from enum import Enum
 from threading import Timer
 from typing import Tuple
 
+from tqdm import tqdm
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
+from googleapiclient.http import HttpRequest, MediaFileUpload, MediaIoBaseDownload
 from watchdog.events import FileSystemEvent, PatternMatchingEventHandler
 from watchdog.observers import Observer
 
@@ -150,15 +152,16 @@ class Drive:
                 break
         uploaded_file_id = self.upload_file(filepath, mimetype)
 
-        request = self._drive.files().export_media(
+        request: HttpRequest = self._drive.files().export_media(
             fileId=uploaded_file_id, mimeType="application/pdf"
         )
         with open(f"{basename}.pdf", "wb") as f:
-            downloader = MediaIoBaseDownload(f, request)
-            done = False
-            while done is False:
-                status, done = downloader.next_chunk()
-                # print("Download %d%%." % int(status.progress() * 100))
+            with tqdm(total=1.0, leave=False) as pbar:
+                downloader = MediaIoBaseDownload(f, request)
+                done = False
+                while done is False:
+                    status, done = downloader.next_chunk()
+                    pbar.update(status.progress())
 
         if delete:
             self.delete_file(uploaded_file_id)
@@ -228,19 +231,68 @@ class Watcher:
         self.observer.join()
 
 
-def main(path):
-    # TODO Consider some form of logging?
-    # TODO add argparse to make it a CLI
-    dir_path = os.path.dirname(os.path.abspath(os.path.expanduser(path)))
-
+def watch_dir(dir_path):
     event_handler = GDriveEventHandler(patterns=["*.doc", "*.docx", "*.ppt", "*.pptx"])
     watcher = Watcher(event_handler, path=dir_path)
     watcher.start()
 
 
+def convert_files(files):
+    FILE_TYPES = (".doc", ".docx", ".ppt", ".pptx")
+    drive = Drive()
+    for f in files:
+        filepath = os.path.abspath(os.path.expanduser(f))
+        if os.path.isdir(filepath):
+            search_globs = list(map(lambda x: f"{filepath}/**/*{x}", FILE_TYPES))
+            filepaths = [
+                result
+                for search_glob in search_globs
+                for result in glob.glob(search_glob, recursive=True)
+            ]
+            if not len(filepaths):
+                return
+            confirm = input(
+                f"There are {len(filepaths)} files to convert, are you sure? [y/n] \n"
+            )
+            if confirm in ("y", "Y"):
+                for i in tqdm(filepaths):
+                    drive.convert_file(i)
+
+        else:
+            if os.path.splitext(filepath)[1] not in FILE_TYPES:
+                print(f"{filepath} has an invalid extension. Skipping file ...")
+            else:
+                drive.convert_file(filepath)
+    drive.close()
+
+
+def create_parser():
+    parser = argparse.ArgumentParser(
+        description="Use Google Drive to convert certain filetypes to pdf."
+    )
+    parser.add_argument("-w", "--w", dest="watch", action="store_true")
+    parser.add_argument(
+        "files",
+        metavar="file",
+        nargs="*",
+        help="list of files to convert or a dir to watch",
+    )
+    return parser
+
+
 if __name__ == "__main__":
-    args = sys.argv
-    path = os.getcwd()
-    if len(args) >= 2:
-        path = args[1]
-    main(path)
+    # TODO Consider some form of logging
+    parser = create_parser()
+    args = parser.parse_args()
+    if args.watch:
+        if len(args.files) == 1 and os.path.isdir(os.path.expanduser(args.files[0])):
+            watch_dir(os.path.expanduser(args.files[0]))
+        elif len(args.files) == 0:
+            watch_dir(os.getcwd())
+        else:
+            print("Invalid args. Only accepts 1 directory to watch for new files.")
+    else:
+        if args.files:
+            convert_files(args.files)
+        else:
+            print("No files given.")
